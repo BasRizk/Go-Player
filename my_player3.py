@@ -16,93 +16,45 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 WIN_REWARD = 1
 DRAW_REWARD = 0
 LOSS_REWARD = -1
-
-horizontal_sym_dict = {
-    1:21, 2:16, 3:11, 4:6, 5:1, 
-    6:22, 7:17, 8:12, 9:7, 10:2, 
-    11:23, 12:18, 13:13, 14:8, 15:3,
-    16:24, 17:19, 18:14, 19:9, 20:4,
-    21:25, 22:20, 23:15, 24:10, 25:5
-    }
- 
-class QLearner:
     
-    def __init__(self, N=5, alpha=0.5, gamma=0.5, initial_reward=-0.5):
-        self.N = 5
-        self.type = 'qlearner'
-        self.alpha = 0.5
-        self.gamma = 0.5
-        self.q_values = {}
-        self.initial_reward = -0.5
-        self.play_log = []
+class QValues:
+    
+    horizontal_sym_dict = {
+        1:21, 2:16, 3:11, 4:6, 5:1, 
+        6:22, 7:17, 8:12, 9:7, 10:2, 
+        11:23, 12:18, 13:13, 14:8, 15:3,
+        16:24, 17:19, 18:14, 19:9, 20:4,
+        21:25, 22:20, 23:15, 24:10, 25:5
+        }
+    
+    def __init__(self, N, initial_value):
+        self.N = N
+        self.board_size = N*N
+        self.q_tables = {}
+        self.initial_reward = initial_value
         self.init_mapping()
-        self.training = False
-        
+        self.recent_board_state = None
+        self.recent_state_q_values = None
+        self.index_of_encoding = None
+
+
     def init_mapping(self):
         self.action_to_listing = {}
         self.listing_to_action = {}
         code = 0
-        for i in range(5):
-            for j in range(5):
+        for i in range(self.N):
+            for j in range(self.N):
                 self.listing_to_action[code] = (i, j)
                 self.action_to_listing[(i, j)] = code
                 code += 1
         self.listing_to_action[code] = 'PASS'
         self.action_to_listing['PASS'] = code    
     
-    
-    def get_input(self, state, piece_type, epsilon=0.1):
-
-        self.own_piece_type = piece_type
-        # TODO Exploration Vs Exploitation
-        
-        # select best q-value @ current-state
-        relevant_q_values = self._state_q_values(state.board)
-
-        # if selected move not valid, turn move q-value to lose   
-        for i in range(state.size):
-            for j in range(state.size):
-                if not state.valid_place_check(
-                        i, j,
-                        self.own_piece_type,
-                        test_check = True
-                        ):
-                    relevant_q_values[self.action_to_listing[(i,j)]] = -1
-        
-        # Follow epsilon greedy policy
-        selected_policy_listing = None
-        explore_new_policies = random.random() > epsilon
-        if self.training and explore_new_policies:
-            other_policy_listings = np.argwhere(
-                (relevant_q_values!=relevant_q_values.max()) & (relevant_q_values!= -1)
-                )
-            if len(other_policy_listings) > 0:
-                selected_policy_listing = random.choice(other_policy_listings)[0]
-        if selected_policy_listing is None or not self.training or not explore_new_policies :
-            optimal_policy_listings = np.argwhere(relevant_q_values==relevant_q_values.max())
-            selected_policy_listing = random.choice(optimal_policy_listings)[0]
-        
-        action = self.listing_to_action[selected_policy_listing]
-        # keep track of movements to learn later from them
-        self.play_log.append([deepcopy(state.board), action])
-        
-        return action
-    
-    # def _probalities_of_actions(self, possible_actions, board_state, T):
-    #     state_q_values = self._state_q_values(self, board_state)
-    #     q_s_a_list = np.zeros(len(possible_actions))
-    #     for a in possible_actions:
-    #         q_s_a_list = np.exp(
-    #             np.e,
-    #             state_q_values[self.actions_to_listing[a]]/T
-    #             )
-    #     return q_s_a_list/q_s_a_list.sum()
-    
     def _state_q_values(self, board_state):
         def encode(arr2d):
             def cost(str25chars):
                 cost = 0
-                for i, c in zip(range(25, 0, -1), str25chars):
+                for i, c in zip(range(self.board_size, 0, -1), str25chars):
                     cost += (i*int(c)) 
                 return cost
                 
@@ -120,32 +72,137 @@ class QLearner:
             index_of_encoding = np.argmax(costs)
             return index_of_encoding, encodings[index_of_encoding]
                     
-        def swap_with_dict(arr, n=25):
-            for i in range(n/2):
-                j = horizontal_sym_dict[i] 
-                arr[i], arr[j] = arr[j], arr[i]
-            return arr
-        
-        def reverse(arr, n=25):
-            return arr[:n][::-1]
-
-        fit_q_values = {
-            0 : lambda x: x,
-            1 : lambda x: reverse(deepcopy(x)),
-            2 : lambda x: swap_with_dict(deepcopy(x)),
-            3 : lambda x: reverse(swap_with_dict(deepcopy(x)))
-            }
-            
         index_of_encoding, board_state_encoded = encode(board_state)
-        relevant_q_values = self.q_values.get(board_state_encoded)
-        if relevant_q_values is not None:
-            relevant_q_values = fit_q_values[index_of_encoding](relevant_q_values)
-        else:
-            # if updated q-value not available, use initial values
+        relevant_q_values = self.q_tables.get(board_state_encoded)
+        if relevant_q_values is None:
+            # 25 cells + 1 considering pass option
             relevant_q_values = np.ones(26)*self.initial_reward
-            # considering pass option, illegalize other out of boundaries
-            self.q_values[board_state_encoded] = relevant_q_values
-        return np.asarray(relevant_q_values)
+            self.q_tables[board_state_encoded] = relevant_q_values
+    
+        return index_of_encoding, np.asarray(relevant_q_values)
+    
+    def _ensure_recent_state(self, board_state):
+        if board_state != self.recent_board_state:         
+            self.recent_board_state = board_state
+            self.index_of_encoding, self.recent_state_q_values =\
+                self._state_q_values(board_state)
+    
+    def _to_fit_listing(self, action):        
+        listing = self.action_to_listing[action]
+        fit_listing = {
+            0: lambda l: l,
+            1: lambda l: self.board_size - l - 1,
+            2: lambda l: self.horizontal_sym_dict[l+1],
+            3: lambda l: self.board_size - self.horizontal_sym_dict[l+1] - 1
+            }
+        
+        if listing != 25:
+            fit_listing[self.index_of_encoding](listing)
+        return listing
+    
+    def _to_fit_action(self, listing):
+        action = self.listing_to_action[listing]
+        return self.listing_to_action[self._to_fit_listing(action)]
+        
+    def __getitem__(self, selector):
+        board_state, action = selector
+        self._ensure_recent_state(board_state)
+        fit_listing = self._to_fit_listing(action)
+        return self.recent_state_q_values[fit_listing]        
+    
+    def __setitem__(self, selector, value):
+        board_state, action = selector
+        self._ensure_recent_state(board_state)
+        fit_listing = self._to_fit_listing(action)
+        self.recent_state_q_values[fit_listing] = value
+    
+    def get_suboptimal_policy(self, board_state):
+        self._ensure_recent_state(board_state)
+        other_policy_listings =\
+            np.argwhere(
+                (self.recent_state_q_values!=self.recent_state_q_values.max()) &\
+                    (self.recent_state_q_values!= -1)
+                )
+        if len(other_policy_listings) == 0:
+            return self.get_optimal_policy(board_state)
+        selected_policy_listing = random.choice(other_policy_listings)[0]
+        
+        return self._to_fit_action(selected_policy_listing)
+    
+    def get_optimal_policy(self, board_state):
+        self._ensure_recent_state(board_state)
+        optimal_policy_listings =\
+            np.argwhere(self.recent_state_q_values==self.recent_state_q_values.max())
+        selected_policy_listing = random.choice(optimal_policy_listings)[0]
+        return self._to_fit_action(selected_policy_listing)
+
+    def max_q(self, board_state):
+        self._ensure_recent_state(board_state)
+        return np.max(self.recent_state_q_values)
+   
+    # def _probalities_of_actions(self, possible_actions, board_state, T):
+    #     state_q_values = self._state_q_values(self, board_state)
+    #     q_s_a_list = np.zeros(len(possible_actions))
+    #     for a in possible_actions:
+    #         q_s_a_list = np.exp(
+    #             np.e,
+    #             state_q_values[self.actions_to_listing[a]]/T
+    #             )
+    #     return q_s_a_list/q_s_a_list.sum()
+    
+    def save(self, filename='q_values'):
+        class Encoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()               
+                # Let the base class default method raise the TypeError
+                return json.JSONEncoder.default(self, obj)
+        
+        with open('.'.join([filename, 'json']), 'w') as f:
+            json.dump(self.q_tables, f, cls=Encoder)        
+        print('Saved', filename)
+    
+    def load(self, filename='q_values'):
+        self.q_tables = json.load(open('.'.join([filename, 'json'])))
+
+        
+class QLearner:
+    
+    def __init__(self, N=5, alpha=0.5, gamma=0.5, initial_reward=-0.5):
+        self.N = 5
+        self.type = 'qlearner'
+        self.alpha = 0.5
+        self.gamma = 0.5
+        self.q_values = QValues(N, initial_reward)
+        self.play_log = []
+        self.training = False
+    
+    def get_input(self, state, piece_type, epsilon=0.1):
+
+        self.own_piece_type = piece_type
+        
+        # if selected move not valid, turn move q-value to lose   
+        for i in range(state.size):
+            for j in range(state.size):
+                if not state.valid_place_check(
+                        i, j,
+                        self.own_piece_type,
+                        test_check = True
+                        ):
+                    self.q_values[(state.board, (i, j))] = -1
+        
+        # TODO Exploration Vs Exploitation
+        # Follow epsilon greedy policy
+        explore_new_policies = random.random() > epsilon
+        if self.training and explore_new_policies:
+            action = self.q_values.get_suboptimal_policy(state.board)
+        else:
+            action = self.q_values.get_optimal_policy(state.board)
+            
+        # keep track of movements to learn later from them
+        self.play_log.append([deepcopy(state.board), action])
+        
+        return action
     
     def train(self, go, epochs, reset=False, save_freq=100, ckpt='q_values', verbose=0):
 
@@ -155,18 +212,16 @@ class QLearner:
         go.verbose = True if verbose == 2 else False
             
         if not reset and os.path.isfile(''.join([ckpt, 'json'])):
-            self.q_values = self.read(filename='q_values')
+            self.q_values.load(filename=ckpt)
             
         last_ckpt_term = ckpt.split('_')[-1] 
         try:
             starting_epoch = int(last_ckpt_term)
         except:                
             starting_epoch = 0
-            
-    
+                
         opponent_player = RandomPlayer()
 
-        
         for i in range(starting_epoch, epochs):
             print('Training...  %d / %d' % (i+1, epochs), end='\r')
     
@@ -181,12 +236,10 @@ class QLearner:
         
             self.learn(winner, verbose)
             if i > 0 and i % save_freq == 0:
-                filename = 'q_values_' + str(i)
-                self.save_json(self.q_values, filename=filename)
-
-        
+                self.q_values.save(filename='q_values_' + str(i))
+ 
         print()
-        self.save_json(self.q_values, filename='q_values_' + str(epochs))
+        self.q_values.save(filename='q_values_' + str(epochs))
 
     def learn(self, winner, verbose):
         if verbose:
@@ -197,53 +250,33 @@ class QLearner:
         if verbose:
             print('Last board state in log:')
             print(board_state)
-            
-        current_state_q_values = self._state_q_values(board_state)
-        if verbose:
-            print('Before update - corresponding q_values:')
-            print(current_state_q_values)
+                    
+        # if verbose:
+        #     print('Before update - corresponding q_values:')
+        #     print(current_state_q_values)
             
         reward = WIN_REWARD if winner == self.own_piece_type else DRAW_REWARD if winner == 0 else LOSS_REWARD
-        current_state_q_values[self.action_to_listing[action]] = reward
+        self.q_values[(board_state, action)] = reward
         
-        if verbose:
-            print('Reward is %f' % reward)
-            print('After update - corresponding q_values:')
-            print(current_state_q_values)
+        # if verbose:
+        #     print('Reward is %f' % reward)
+        #     print('After update - corresponding q_values:')
+        #     print(current_state_q_values)
             
-        max_q = np.max(current_state_q_values)
-        # print('Hold max_q value')
+        max_q = self.q_values.max_q(board_state)
+
         # propagate rewards back from result: update move's q-value per state back to the start of the game
         while len(self.play_log) > 0:
             board_state, action = self.play_log.pop()
-            current_state_q_values = self._state_q_values(board_state)
-            
-            current_q = current_state_q_values[self.action_to_listing[action]]
-            current_state_q_values[self.action_to_listing[action]] =\
-                            (1-self.alpha)*(current_q) +\
-                            self.alpha*(self.gamma*max_q)
                             
-            max_q = np.max(current_state_q_values)
+            current_q = self.q_values[(board_state, action)]
+            self.q_values[(board_state, action)] =\
+                (1-self.alpha)*(current_q) + self.alpha*(self.gamma*max_q)
+            max_q = self.q_values.max_q(board_state)
             
-    def save_json(self, obj, filename='q_values'):
-        class Encoder(json.JSONEncoder):
-            def default(self, obj):
-                if isinstance(obj, np.ndarray):
-                    return obj.tolist()               
-                # Let the base class default method raise the TypeError
-                return json.JSONEncoder.default(self, obj)
-        
-        with open('.'.join([filename, 'json']), 'w') as f:
-            json.dump(obj, f, cls=Encoder)        
-        print('Saved', filename)
-            
-    def read(self, filename='q_values'):
-        return json.load(open('.'.join([filename, 'json'])))
-
 
 def visualize_board_encoding(board_encoding, n=5):
     col = 0
-    
     for c in board_encoding:
         c = 'X' if c == '1' else 'O' if c == '2' else  ' '
         print(c, end='|')
@@ -268,7 +301,6 @@ if __name__ == '__main__':
     go = GO(N)
     q_learner = QLearner()
     
-    args.train = 5
     if args.train > 0:
         q_learner.training = True
         q_learner.train(go, 
