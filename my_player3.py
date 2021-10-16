@@ -9,7 +9,7 @@ from read import readInput
 from write import writeOutput
 from host import GO
 
-import datetime
+from datetime import datetime
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -19,27 +19,19 @@ DRAW_REWARD = 0
 LOSS_REWARD = -1
     
 class QValues:
-    
-    horizontal_sym_dict = {
-        1:21, 2:16, 3:11, 4:6, 5:1, 
-        6:22, 7:17, 8:12, 9:7, 10:2, 
-        11:23, 12:18, 13:13, 14:8, 15:3,
-        16:24, 17:19, 18:14, 19:9, 20:4,
-        21:25, 22:20, 23:15, 24:10, 25:5
-        }
-    
+
     def __init__(self, N, initial_value):
         self.N = N
         self.board_size = N*N
         self.q_tables = {}
         self.initial_reward = initial_value
-        self.init_mapping()
+        self.init_mappings()
         self.recent_board_state = None
         self.recent_state_q_values = None
         self.index_of_encoding = None
 
 
-    def init_mapping(self):
+    def init_mappings(self):
         self.action_to_listing = {}
         self.listing_to_action = {}
         code = 0
@@ -49,30 +41,45 @@ class QValues:
                 self.action_to_listing[(i, j)] = code
                 code += 1
         self.listing_to_action[code] = 'PASS'
-        self.action_to_listing['PASS'] = code    
+        self.action_to_listing['PASS'] = code  
+        
+        board_sample = np.arange(0, self.board_size).reshape((self.N,self.N))
+        equi_boards = [
+                board_sample,
+                np.rot90(board_sample, k=1, axes=(1,0)),    # rotate 90 right
+                np.rot90(board_sample, k=1, axes=(0,1)),    # rotate 90 left
+                np.rot90(board_sample, k=2, axes=(1,0)),    # rotate 180 right
+                board_sample.T,                             # transpose
+                np.rot90(board_sample, k=1, axes=(0,1)).T,  # flip over y-axis
+                np.rot90(board_sample, k=1, axes=(1,0)).T,  # flip over x-axis
+                np.rot90(board_sample, k=2, axes=(1,0)).T   # flip 180 rotation
+            ]
+        
+        self.sym_dict_forward = [{} for i in range(len(equi_boards))]
+        self.sym_dict_backward = [{} for i in range(len(equi_boards))]
+                         
+        for d_i in range(len(equi_boards)):
+            for i in range(self.N):
+                for j in range(self.N):
+                    self.sym_dict_forward[d_i][board_sample[i][j]] =\
+                        equi_boards[d_i][i][j]
+                    self.sym_dict_backward[d_i][equi_boards[d_i][i][j]] =\
+                        board_sample[i][j]
+
     
-    def _state_q_values(self, board_state):
+    def _state_q_values(self, board_state):      
         def encode(arr2d):
-            def cost(str25chars):
-                cost = 0
-                for i, c in zip(range(self.board_size, 0, -1), str25chars):
-                    cost += (i*int(c)) 
-                return cost
-                
-            arr2d = np.array(arr2d)
+            arr = np.array(arr2d).reshape(len(arr2d)**2)
             encodings = []
-            for arr in [arr2d, np.rot90(arr2d, k=1, axes=(1, 0))]:
-                encoding1 = encoding2 = ""
-                for row in arr:
-                    for c in row:
-                        encoding1 = encoding1 + str(c)
-                        encoding2 = str(c) + encoding2
-                encodings.append(encoding1)
-                encodings.append(encoding2)
-            costs = [cost(encoding) for encoding in encodings]
-            index_of_encoding = np.argmax(costs)
+            for mapping in self.sym_dict_forward:
+                encoding = ""
+                for i in range(len(arr)):
+                    encoding += str(arr[mapping[i]])
+                encodings.append(encoding)
+            costs = [int(encoding) for encoding in encodings]
+            index_of_encoding = np.argmin(costs)
             return index_of_encoding, encodings[index_of_encoding]
-                    
+        
         index_of_encoding, board_state_encoded = encode(board_state)
         relevant_q_values = self.q_tables.get(board_state_encoded)
         if relevant_q_values is None:
@@ -90,15 +97,8 @@ class QValues:
     
     def _to_fit_listing(self, action):        
         listing = self.action_to_listing[action]
-        fit_listing = {
-            0: lambda l: l,
-            1: lambda l: self.board_size - l - 1,
-            2: lambda l: self.horizontal_sym_dict[l+1],
-            3: lambda l: self.board_size - self.horizontal_sym_dict[l+1] - 1
-            }
-        
         if listing != 25:
-            fit_listing[self.index_of_encoding](listing)
+            self.sym_dict_backward[self.index_of_encoding][listing]
         return listing
     
     def _to_fit_action(self, listing):
@@ -151,6 +151,31 @@ class QValues:
     #             )
     #     return q_s_a_list/q_s_a_list.sum()
     
+    def save_into_splits(self, prefix='q_values', split=100000):
+        class Encoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()               
+                # Let the base class default method raise the TypeError
+                return json.JSONEncoder.default(self, obj)
+        
+        begin_time = datetime.now()
+        
+        filename = '.'.join([prefix, 'json'])
+        with open(filename, 'w') as f: 
+            num_of_splits = len(self.q_tables)//split + 1
+            splits = [{} for i in range(num_of_splits)]
+            count = 0
+            for k, v in self.q_tables:
+                split_i = count // split
+                splits[split_i][k] = v
+                count += 1
+                
+            json.dump(self.q_tables, f, cls=Encoder)    
+        
+        end_time = datetime.now() - begin_time
+        print('Saved %s in' % filename, end_time)
+        
     def save(self, filename='q_values'):
         class Encoder(json.JSONEncoder):
             def default(self, obj):
@@ -159,19 +184,16 @@ class QValues:
                 # Let the base class default method raise the TypeError
                 return json.JSONEncoder.default(self, obj)
         
-        begin_time = datetime.datetime.now()
-        
-        with open('.'.join([filename, 'json']), 'w') as f: 
+        begin_time = datetime.now()
+        with open('.'.join([filename, 'json']), 'w') as f:                 
             json.dump(self.q_tables, f, cls=Encoder)    
-        
-        end_time = datetime.datetime.now() - begin_time
+        end_time = datetime.now() - begin_time
         print('Saved %s in' % filename, end_time)
 
-    
     def load(self, filename='q_values'):
-        begin_time = datetime.datetime.now()
+        begin_time = datetime.now()
         self.q_tables = json.load(open('.'.join([filename, 'json'])))
-        end_time = datetime.datetime.now() - begin_time
+        end_time = datetime.now() - begin_time
         print('Loaded %s in' % filename, end_time)
         
 class QLearner:
@@ -299,7 +321,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--play', '-p', type=bool, help='play given input file', default=False)
     parser.add_argument('--train', '-t', type=int, help='learn q-values', default=0)
-    parser.add_argument('--save_freq', '-s', type=int, help='freq of saving q_values', default=1)
+    parser.add_argument('--save_freq', '-s', type=int, help='freq of saving q_values', default=10)
     parser.add_argument('--ckpt', '-c', type=str, help='ckpt filename', default='q_values')
     parser.add_argument('--reset', '-r', type=bool, help='reset q-values', default=False)
     parser.add_argument('--verbose', '-v', type=int, help='print board', default=0)
@@ -316,17 +338,17 @@ if __name__ == '__main__':
                         save_freq=args.save_freq, ckpt=args.ckpt,
                         verbose=args.verbose)
     else:
-        begin_total_time = datetime.datetime.now()
+        begin_total_time = datetime.now()
         piece_type, previous_board, board = readInput(N)
         go.set_board(piece_type, previous_board, board)
-        begin_reading_time = datetime.datetime.now()
+        begin_reading_time = datetime.now()
         q_values_filename = 'q_values_400000'
         q_learner.q_values = q_learner.read(filename=q_values_filename)
         q_values = q_learner.q_values
         action = q_learner.get_input(go, piece_type)
         writeOutput(action)
-        print('Total time consumed:', datetime.datetime.now() - begin_total_time)
-        print('Reading time consumed:', datetime.datetime.now() - begin_reading_time)
+        print('Total time consumed:', datetime.now() - begin_total_time)
+        print('Reading time consumed:', datetime.now() - begin_reading_time)
         print('Q_values file used is', q_values_filename)
 
 
