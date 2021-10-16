@@ -9,6 +9,7 @@ from read import readInput
 from write import writeOutput
 from host import GO
 
+import datetime
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -158,13 +159,20 @@ class QValues:
                 # Let the base class default method raise the TypeError
                 return json.JSONEncoder.default(self, obj)
         
-        with open('.'.join([filename, 'json']), 'w') as f:
-            json.dump(self.q_tables, f, cls=Encoder)        
-        print('Saved', filename)
+        begin_time = datetime.datetime.now()
+        
+        with open('.'.join([filename, 'json']), 'w') as f: 
+            json.dump(self.q_tables, f, cls=Encoder)    
+        
+        end_time = datetime.datetime.now() - begin_time
+        print('Saved %s in' % filename, end_time)
+
     
     def load(self, filename='q_values'):
+        begin_time = datetime.datetime.now()
         self.q_tables = json.load(open('.'.join([filename, 'json'])))
-
+        end_time = datetime.datetime.now() - begin_time
+        print('Loaded %s in' % filename, end_time)
         
 class QLearner:
     
@@ -211,7 +219,7 @@ class QLearner:
         
         go.verbose = True if verbose == 2 else False
             
-        if not reset and os.path.isfile(''.join([ckpt, 'json'])):
+        if not reset and os.path.isfile(ckpt + '.json'):
             self.q_values.load(filename=ckpt)
             
         last_ckpt_term = ckpt.split('_')[-1] 
@@ -308,7 +316,6 @@ if __name__ == '__main__':
                         save_freq=args.save_freq, ckpt=args.ckpt,
                         verbose=args.verbose)
     else:
-        import datetime
         begin_total_time = datetime.datetime.now()
         piece_type, previous_board, board = readInput(N)
         go.set_board(piece_type, previous_board, board)
