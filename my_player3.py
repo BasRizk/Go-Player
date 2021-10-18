@@ -11,6 +11,8 @@ from host import GO
 
 from datetime import datetime
 import warnings
+import os
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
@@ -67,17 +69,7 @@ class QValues:
                     x, y = np.asarray(np.where(c == equi_boards[d_i]))
                     x, y = x[0], y[0]
                     self.sym_dict_backward[d_i][c] = board_sample[x][y]
-                        # equi_boards[d_i][i][j]
-                    # self.sym_dict_forward[d_i][equi_boards[d_i][i][j]] = c
                     self.sym_dict_forward[d_i][c] = equi_boards[d_i][x][y]
-    
-        # for d_i in range(len(equi_boards)):
-        #     for i in range(self.N):
-        #         for j in range(self.N):
-        #             self.sym_dict_backward[d_i][board_sample[i][j]] =\
-        #                 equi_boards[d_i][i][j]
-        #             self.sym_dict_forward[d_i][equi_boards[d_i][i][j]] =\
-        #                 board_sample[i][j]
 
     def visualize_q_table(self, board_state, encoding_inc=None, verbose=0):
         def fit_table(table):
@@ -92,31 +84,17 @@ class QValues:
             return fit_table
             
         def print_on_board(fit_q_table):
-            if self.verbose > 2:
-                print('-' * self.N * 11)
-                count = -1
-                for i in range(self.N):
-                    for j in range(self.N):
-                        count += 1
-                        if fit_q_table[i][j] == -1:
-                            print('%10s' % ' ', end='|')
-                        else:
-                            print('%10s' % (str(count) + "," + str(fit_q_table[i][j])), end='|')
-                    print()
-                print('PASS =', self.recent_state_q_values[-1])
-                print('-' * self.N * 11)
-            else:
-                print('-' * self.N * 6)
-                for i in range(self.N):
-                    for j in range(self.N):
-                        if fit_q_table[i][j] == -1:
-                            print('     ', end='|')
-                        else:
-                            print('%5s' % str(fit_q_table[i][j]), end='|')
-                    print()
-                print('PASS =', self.recent_state_q_values[-1])
-                print('-' * self.N * 6)
-            
+            print('-' * self.N * 6)
+            for i in range(self.N):
+                for j in range(self.N):
+                    if fit_q_table[i][j] == -1:
+                        print('     ', end='|')
+                    else:
+                        print('%5s' % "{:.2f}".format(fit_q_table[i][j]), end='|')
+                print()
+            print('PASS =', self.recent_state_q_values[-1])
+            print('-' * self.N * 6)
+        
         self._ensure_recent_state(board_state)
         if encoding_inc is not None and self.index_of_encoding not in encoding_inc:
             return
@@ -143,9 +121,9 @@ class QValues:
                     encoding += str(arr[mapping[i]])
                 encodings.append(encoding)
             
-            costs = [int(encoding) for encoding in encodings]
-            index_of_encoding = np.argmin(costs)
-            return index_of_encoding, encodings[index_of_encoding]
+            encodings = [int(encoding) for encoding in encodings]
+            index_of_encoding = np.argmin(encoding)
+            return index_of_encoding, str(encodings[index_of_encoding])
         
         index_of_encoding, board_state_encoded = encode(board_state)
         relevant_q_values = self.q_tables.get(board_state_encoded)
@@ -244,25 +222,35 @@ class QValues:
         end_time = datetime.now() - begin_time
         print('Saved %s in' % filename, end_time)
         
-    def save(self, filename='q_values'):
+
+    
+    def save(self, piece_type, epoch):
         class Encoder(json.JSONEncoder):
             def default(self, obj):
                 if isinstance(obj, np.ndarray):
                     return obj.tolist()               
                 # Let the base class default method raise the TypeError
                 return json.JSONEncoder.default(self, obj)
-        
+        def ensure_directory(piece_type):
+            if not os.path.exists(str(piece_type)):
+                os.makedirs(str(piece_type))
         begin_time = datetime.now()
-        with open('.'.join([filename, 'json']), 'w') as f:                 
+        ensure_directory(piece_type)
+        filepath = str(piece_type) + '/' +  '_'.join(['q_values', str(epoch)]) + '.json'
+        with open(filepath, 'w') as f:                 
             json.dump(self.q_tables, f, cls=Encoder)    
         end_time = datetime.now() - begin_time
-        print('Saved %s in' % filename, end_time)
+        print('Saved %s in' % filepath, end_time)
 
-    def load(self, filename='q_values'):
+    def load(self, piece_type, epoch):
         begin_time = datetime.now()
-        self.q_tables = json.load(open('.'.join([filename, 'json'])))
-        end_time = datetime.now() - begin_time
-        print('Loaded %s in' % filename, end_time)
+        filepath = str(piece_type) + '/' +  '_'.join(['q_values', str(epoch)]) + '.json'
+        if os.path.isfile(filepath):
+            self.q_tables = json.load(open(filepath))
+            end_time = datetime.now() - begin_time
+            print('Loaded %s in' % filepath, end_time)
+            return int(epoch)
+        return 0
         
 class QLearner:
     
@@ -274,10 +262,10 @@ class QLearner:
         self.gamma = 0.5
         self.q_values = QValues(N, initial_reward)
         self.play_log = []
-        self.training = training
+        self.epsilon = 0.1
     
-    def get_input(self, state, piece_type, epsilon=0.1):
-
+    def get_input(self, state, piece_type):
+        
         self.own_piece_type = piece_type
         
         # if selected move not valid, turn move q-value to lose   
@@ -295,8 +283,8 @@ class QLearner:
         
         # TODO Exploration Vs Exploitation
         # Follow epsilon greedy policy
-        explore_new_policies = random.random() > epsilon
-        if self.training and explore_new_policies:
+        explore_new_policies = random.random() < self.epsilon
+        if explore_new_policies:
             action = self.q_values.get_suboptimal_policy(state.board)
         else:
             action = self.q_values.get_optimal_policy(state.board)
@@ -308,45 +296,62 @@ class QLearner:
 
         return action
     
-    def train(self, go, epochs, reset=False, save_freq=100, ckpt='q_values', verbose=0):
-
-        from random_player import RandomPlayer
-        import os
-        
-        go.verbose = True if verbose == 2 else False
-        self.q_values.verbose=verbose
-            
-        if not reset and os.path.isfile(ckpt + '.json'):
-            self.q_values.load(filename=ckpt)
-            
-        last_ckpt_term = ckpt.split('_')[-1] 
-        try:
-            starting_epoch = int(last_ckpt_term)
-        except:                
-            starting_epoch = 0
-                
-        opponent_player = RandomPlayer()
-
-        for i in range(starting_epoch, epochs):
-            print('Training...  %d / %d' % (i+1, epochs), end='\r')
-    
+    def offline_play(self, go, train, epochs, train_piece_type=0,
+              reset=False, save_freq=100, ckpt='q_values',
+              epsilon=0.1, verbose=0):
+        def reset_game(go):
             go.X_move = True # X chess plays first
             go.died_pieces = [] # Intialize died pieces to be empty
             go.n_move = 0 # Trace the number of moves
             
-            if i % 2 == 0:
-                winner = go.play(self, opponent_player, verbose=verbose)    
-            else:
-                winner = go.play(opponent_player, self, verbose=verbose)    
+        from random_player import RandomPlayer
         
-            self.learn(winner, verbose)
-            if i > 0 and i % save_freq == 0:
-                self.q_values.save(filename='q_values_' + str(i))
- 
-        print()
-        self.q_values.save(filename='q_values_' + str(epochs))
+        self.q_values.verbose=verbose
+        go.verbose = True if verbose == 2 else False
+        
+        starting_epoch = 0
+        if not reset:
+            starting_epoch = self.q_values.load(train_piece_type, ckpt)
+                
+        opponent_player = RandomPlayer()
 
-    def learn(self, winner, verbose):
+        play = {
+            0: lambda i, x, y: play[1](i, x, y) if i%2 == 0 else play[2](i, x, y),
+            1: lambda _, x, y: go.play(x, y, verbose=verbose),
+            2: lambda _, x, y: go.play(y, x, verbose=verbose)
+            }
+        
+        winnings_count, recent_winnings_count = 0
+        for i in range(starting_epoch, epochs):
+            print('Training...  %d / %d with %d winnings' % (i+1, epochs, winnings_count), end='\r')
+            if verbose:
+                print()
+            self.epsilon = (1 - (starting_epoch/epochs))*epsilon
+            
+            reset_game(go)
+            
+            winner = play[train_piece_type](i, self, opponent_player)
+            winnings_count += 1 if winner == self.own_piece_type else 0
+            recent_winnings_count += 1 if winner == self.own_piece_type else 0
+
+            if train:
+                self.learn(go, verbose)
+                if i > 0 and i % save_freq == 0:
+                    self.q_values.save(train_piece_type, i)
+                    recent_winnings_count = 0
+                    print('\n', 'Winnings recently = %d' % recent_winnings_count)
+
+        if train:
+            self.q_values.save(train_piece_type, i)
+    
+    def learn(self, state, verbose):
+        def reward_function(state):
+            cnt_1 = state.score(1)
+            cnt_2 = state.score(2)
+            side = 1 if self.own_piece_type == 1 else -1
+            max_score = (self.N**2 + state.komi)
+            return (side/max_score)*(cnt_1 - (cnt_2 + state.komi))
+        
         if verbose:
             print('Play-log consists of %d states' % len(self.play_log))
             print('Q-values consists of %d tables' % len(self.q_values.q_tables))
@@ -356,17 +361,12 @@ class QLearner:
             print('Last board state in log:')
             print(board_state)
                     
-        # if verbose:
-        #     print('Before update - corresponding q_values:')
-        #     print(current_state_q_values)
-            
-        reward = WIN_REWARD if winner == self.own_piece_type else DRAW_REWARD if winner == 0 else LOSS_REWARD
+        # reward = WIN_REWARD if winner == self.own_piece_type else DRAW_REWARD if winner == 0 else LOSS_REWARD
+        reward = reward_function(state)
         self.q_values[(board_state, action)] = reward
         
-        # if verbose:
-        #     print('Reward is %f' % reward)
-        #     print('After update - corresponding q_values:')
-        #     print(current_state_q_values)
+        if verbose:
+            print('Reward is %f' % reward)
             
         max_q = self.q_values.max_q(board_state)
 
@@ -378,7 +378,10 @@ class QLearner:
             self.q_values[(board_state, action)] =\
                 (1-self.alpha)*(current_q) + self.alpha*(self.gamma*max_q)
             max_q = self.q_values.max_q(board_state)
-
+    
+    def load_q_values(self, piece_type=0, epochs=''):
+        self.q_values.load(piece_type, epochs)
+        
 def visualize_board_encoding(board_encoding, n=5):
     col = 0
     for c in board_encoding:
@@ -392,8 +395,13 @@ def visualize_board_encoding(board_encoding, n=5):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--play', '-p', type=bool, help='play given input file', default=False)
-    parser.add_argument('--train', '-t', type=int, help='learn q-values', default=0)
+    parser.add_argument('--train', '-t', type=bool, help='learn q-values', default=False)
+    parser.add_argument('--epochs', '-i', type=int, help='num of training epochs', default=0)
+    parser.add_argument('--piece_type', '-pt', type=int, help='piece_type_to_train', default=0)
+    parser.add_argument('--alpha', '-a', type=float, help='alpha - learning rate', default=0.1)
+    parser.add_argument('--gamma', '-g', type=float, help='gamma - discount factor', default=0.9)
+    parser.add_argument('--initial_reward', '-ir', type=float, help='initial q-value', default=-0.5)
+    parser.add_argument('--epsilon', '-e', type=float, help='probability of exploring new_policies', default=0.1)
     parser.add_argument('--save_freq', '-s', type=int, help='freq of saving q_values', default=1)
     parser.add_argument('--ckpt', '-c', type=str, help='ckpt filename', default='q_values')
     parser.add_argument('--reset', '-r', type=bool, help='reset q-values', default=False)
@@ -402,27 +410,32 @@ if __name__ == '__main__':
     
     N = 5
     go = GO(N)
-    q_learner = QLearner()
+    q_learner = QLearner(alpha=args.alpha, gamma=args.gamma, initial_reward=args.initial_reward)
     
-    if args.train > 0:
-        q_learner.training = False
-        q_learner.train(go, 
-                        epochs=args.train, reset=args.reset, 
-                        save_freq=args.save_freq, ckpt=args.ckpt,
+    if args.epochs > 0:
+        if args.train:
+            filename = str(args.alpha) + 'alpha' + str(args.gamma) + 'gamma' +\
+                    str(args.initial_reward) + 'intial_value'
+            if not os.path.exists(filename):
+                os.makedirs(filename)
+                
+        q_learner.offline_play(go, train = args.train,
+                        epochs=args.epochs, train_piece_type=args.piece_type,
+                        reset=args.reset, save_freq=args.save_freq,
+                        ckpt=args.ckpt,
+                        epsilon=args.epsilon,
                         verbose=args.verbose)
     else:
         begin_total_time = datetime.now()
         piece_type, previous_board, board = readInput(N)
         go.set_board(piece_type, previous_board, board)
         begin_reading_time = datetime.now()
-        q_values_filename = 'q_values_400000'
-        q_learner.q_values = q_learner.read(filename=q_values_filename)
-        q_values = q_learner.q_values
+        q_learner.load_q_values(piece_type=piece_type, epochs=60000)
+        # q_values = q_learner.q_values
         action = q_learner.get_input(go, piece_type)
         writeOutput(action)
         print('Total time consumed:', datetime.now() - begin_total_time)
         print('Reading time consumed:', datetime.now() - begin_reading_time)
-        print('Q_values file used is', q_values_filename)
 
 
 
