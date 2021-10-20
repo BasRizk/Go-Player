@@ -115,16 +115,16 @@ class QValues:
     def _state_q_values(self, board_state):      
         def encode(arr2d):
             arr = np.array(arr2d).reshape(len(arr2d)**2)
-            encodings = []
+            all_encodings = []
             for mapping in self.sym_dict_forward:
                 encoding = ""
                 for i in range(len(arr)):
                     encoding += str(arr[mapping[i]])
-                encodings.append(encoding)
+                all_encodings.append(encoding)
             
-            encodings = [int(encoding) for encoding in encodings]
-            index_of_encoding = np.argmin(encoding)
-            return index_of_encoding, str(encodings[index_of_encoding])
+            all_encodings = [int(encoding) for encoding in all_encodings]
+            index_of_encoding = np.argmin(all_encodings)
+            return index_of_encoding, str(all_encodings[index_of_encoding])
         
         index_of_encoding, board_state_encoded = encode(board_state)
         relevant_q_values = self.q_tables.get(board_state_encoded)
@@ -278,9 +278,12 @@ class QLearner:
         self.type = 'qlearner'
         self.alpha = alpha
         self.gamma = gamma
+        self.initial_reward = initial_reward
         self.q_values = QValues(N, initial_reward)
         self.play_log = []
         self.epsilon = 0
+        self.debug_file = None
+        self.verbose = False
         
     def get_input(self, state, piece_type):
         
@@ -310,12 +313,16 @@ class QLearner:
         # keep track of movements to learn later from them
         self.play_log.append([deepcopy(state.board), action])
         
-        # self.q_values.visualize_q_table(state.board)
-        # print('selected action = ', action)
+        if self.verbose >= 2:
+            self.q_values.visualize_q_table(state.board)
+            print('selected action = ', action)
 
         return action
     
     def load_ckpt(self, train_piece_type, ckpt):
+        # if os.path.exists(ckpt):
+        #     with open(ckpt, 'r') as f:
+        #        piece_type = f.readline() 
         return self.q_values.load(train_piece_type, ckpt)
         
     def offline_play(self, go, train, epochs, train_piece_type=0,
@@ -326,9 +333,17 @@ class QLearner:
             go.died_pieces = [] # Intialize died pieces to be empty
             go.n_move = 0 # Trace the number of moves
             
+        train_identifier = str(self.alpha) + 'alpha' + str(self.gamma) + 'gamma' +\
+                    str(self.epsilon) + 'eps' + str(self.initial_reward) + 'initial_value'
+        if train:
+            if not os.path.exists(train_identifier):
+                os.makedirs(train_identifier)        
+            log_file = open(train_identifier + '/' + str(train_piece_type) + '.log', 'a')
+            
         from random_player import RandomPlayer
         
-        self.q_values.verbose=verbose
+        self.verbose = verbose
+        self.q_values.verbose = verbose
         go.verbose = True if verbose > 1 else False
 
         starting_epoch = 0
@@ -357,22 +372,27 @@ class QLearner:
 
             print('Played...  %d / %d with %d winnings, and %d first-time states' %
                   (i+1, epochs, total_winnings_count,
-                   self.q_values.num_of_first_time_states_per_run),
-                  end='\r')
-            if verbose:
-                print()
+                   self.q_values.num_of_first_time_states_per_run), end='\r')
             if train:
-                self.learn(go, verbose)
+                self.learn(go)
                 if i > 0 and i % save_freq == 0:
+                    print()
+                    log_file.write('Played...  %d / %d with %d winnings, and %d first-time states' %
+                      (i+1, epochs, total_winnings_count,
+                       self.q_values.num_of_first_time_states_per_run) + '\n')
                     self.q_values.save(train_piece_type, i)
                     print('Winnings recently = %d' % recent_winnings_count)
+                    log_file.write('Winnings recently = %d' % recent_winnings_count + '\n')
                     recent_winnings_count = 0
+                log_file.flush()
                     
         if train:
             self.q_values.save(train_piece_type, i)
-            print('Winnings recently = %d' % recent_winnings_count)
+            print('Winnings recently = %d' % recent_winnings_count)            
+            log_file.write('Winnings recently = %d' % recent_winnings_count + '\n')            
+            log_file.close()
     
-    def learn(self, state, verbose):
+    def learn(self, state):
         def reward_function(state):
             cnt_1 = state.score(1)
             cnt_2 = state.score(2)
@@ -385,12 +405,13 @@ class QLearner:
             return len(diff[diff > 0])
 
         
-        if verbose:
+        if self.verbose:
+            print()
             print('Play-log consists of %d states' % len(self.play_log))
             print('Q-values consists of %d tables' % len(self.q_values.q_tables))
 
         board_state, action = self.play_log.pop()
-        if verbose:
+        if self.verbose:
             print('Last board state in log:')
             print(board_state)
                     
@@ -398,7 +419,7 @@ class QLearner:
         end_reward = reward_function(state)
         self.q_values[(board_state, action)] = end_reward
         
-        if verbose:
+        if self.verbose:
             print('Reward is %f' % end_reward)
 
         max_q = self.q_values.max_q(board_state)
@@ -420,7 +441,7 @@ if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--train', '-t', type=bool, help='learn q-values', default=True)
-    parser.add_argument('--epochs', '-i', type=int, help='num of training epochs', default=0)
+    parser.add_argument('--epochs', '-i', type=int, help='num of training epochs', default=1)
     parser.add_argument('--piece_type', '-pt', type=int, help='piece_type_to_train', default=0)
     parser.add_argument('--alpha', '-a', type=float, help='alpha - learning rate', default=0.1)
     parser.add_argument('--gamma', '-g', type=float, help='gamma - discount factor', default=0.9)
@@ -430,7 +451,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_freq', '-s', type=int, help='freq of saving q_values', default=1)
     parser.add_argument('--ckpt', '-c', type=str, help='ckpt filename', default='q_values')
     parser.add_argument('--reset', '-r', type=bool, help='reset q-values', default=False)
-    parser.add_argument('--verbose', '-v', type=int, help='print board', default=1)
+    parser.add_argument('--verbose', '-v', type=int, help='print board', default=0)
     args = parser.parse_args()
     
     N = 5
@@ -438,13 +459,6 @@ if __name__ == '__main__':
     q_learner = QLearner(alpha=args.alpha, gamma=args.gamma, initial_reward=args.initial_reward)
     
     if args.epochs > 0:
-        if args.train:
-            filename = str(args.alpha) + 'alpha' + str(args.gamma) + 'gamma' +\
-                    str(args.epsilon) + 'eps' + str(args.initial_reward) + 'intial_value'
-
-            if not os.path.exists(filename):
-                os.makedirs(filename)
-                
         q_learner.offline_play(go, train = args.train,
                         epochs=args.epochs, train_piece_type=args.piece_type,
                         reset=args.reset, save_freq=args.save_freq,
