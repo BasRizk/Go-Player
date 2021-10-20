@@ -16,9 +16,9 @@ import os
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
-WIN_REWARD = 1
-DRAW_REWARD = 0.5
-LOSS_REWARD = 0
+# WIN_REWARD = 1
+# DRAW_REWARD = 0.5
+# LOSS_REWARD = 0
     
 class QValues:
 
@@ -67,16 +67,9 @@ class QValues:
             for i in range(self.N):
                 for j in range(self.N):
                     c = board_sample[i][j]
-                    # x, y = np.asarray(np.where(c == equi_boards[d_i]))
-                    # x, y = x[0], y[0]
-                    
-                    # self.sym_dict_backward[d_i][c] = board_sample[x][y]
                     self.sym_dict_backward[d_i][equi_boards[d_i][i][j]] = c
-                    # print(self.sym_dict_backward[d_i][c])
                     self.sym_dict_forward[d_i][c] = equi_boards[d_i][i][j]
                     
-        # self.sym_dict_forward[0], self.sym_dict_forward[1] =\
-        #     self.sym_dict_forward[1], self.sym_dict_forward[0]
 
     def visualize_q_table(self, board_state, encoding_inc=None, verbose=0):
         def fit_table(table):
@@ -102,8 +95,6 @@ class QValues:
             print('PASS =', self.recent_state_q_values[-1])
             print('-' * self.N * 6)
         
-        # if self.index_of_encoding == 0:
-        #     return
         self._ensure_recent_state(board_state)
         if encoding_inc is not None and self.index_of_encoding not in encoding_inc:
             return
@@ -290,7 +281,7 @@ class QLearner:
         self.q_values = QValues(N, initial_reward)
         self.play_log = []
         self.epsilon = 0
-    
+        
     def get_input(self, state, piece_type):
         
         self.own_piece_type = piece_type
@@ -324,6 +315,9 @@ class QLearner:
 
         return action
     
+    def load_ckpt(self, train_piece_type, ckpt):
+        return self.q_values.load(train_piece_type, ckpt)
+        
     def offline_play(self, go, train, epochs, train_piece_type=0,
               reset=False, save_freq=100, ckpt='q_values',
               epsilon=0.1, verbose=0):
@@ -336,10 +330,10 @@ class QLearner:
         
         self.q_values.verbose=verbose
         go.verbose = True if verbose > 1 else False
-        
+
         starting_epoch = 0
         if not reset:
-            starting_epoch = self.q_values.load(train_piece_type, ckpt)
+            starting_epoch = self.load_ckpt(train_piece_type, ckpt)
                 
         opponent_player = RandomPlayer()
 
@@ -370,11 +364,10 @@ class QLearner:
             if train:
                 self.learn(go, verbose)
                 if i > 0 and i % save_freq == 0:
-                    self.q_values.save(train_piece_type, i, total_winnings_count)
+                    self.q_values.save(train_piece_type, i)
                     print('Winnings recently = %d' % recent_winnings_count)
                     recent_winnings_count = 0
-
-
+                    
         if train:
             self.q_values.save(train_piece_type, i)
             print('Winnings recently = %d' % recent_winnings_count)
@@ -384,13 +377,13 @@ class QLearner:
             cnt_1 = state.score(1)
             cnt_2 = state.score(2)
             side = 1 if self.own_piece_type == 1 else -1
-            # max_score = (self.N**2 + state.komi)
             return (side)*(cnt_1 - (cnt_2 + state.komi))
         
         def reward(s1, s2):
             # return num of dead pieces
             diff = np.array(s2) - np.array(s1)
             return len(diff[diff > 0])
+
         
         if verbose:
             print('Play-log consists of %d states' % len(self.play_log))
@@ -407,7 +400,7 @@ class QLearner:
         
         if verbose:
             print('Reward is %f' % end_reward)
-            
+
         max_q = self.q_values.max_q(board_state)
 
         # propagate rewards back from result: update move's q-value per state back to the start of the game
@@ -422,7 +415,7 @@ class QLearner:
     
     def load_q_values(self, piece_type=0, epochs=''):
         self.q_values.load(piece_type, epochs)
-        
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -448,6 +441,7 @@ if __name__ == '__main__':
         if args.train:
             filename = str(args.alpha) + 'alpha' + str(args.gamma) + 'gamma' +\
                     str(args.epsilon) + 'eps' + str(args.initial_reward) + 'intial_value'
+
             if not os.path.exists(filename):
                 os.makedirs(filename)
                 
