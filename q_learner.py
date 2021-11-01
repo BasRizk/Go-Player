@@ -41,7 +41,7 @@ class QLearner:
         self.num_of_random_plays = num_of_random_plays
         self.percentage_cutoff = percentage_cutoff
         
-    def get_input(self, state, piece_type, train=False):
+    def get_input(self, state, piece_type, train=True):
         if train:
             if self.verbose > 0:
                 print('In Training - Using Other plays along (if applicable)')
@@ -53,26 +53,29 @@ class QLearner:
             else:
                 GameStats.increment_game_step()
             
-    
-
             random_player = RandomPlayer()
             greedy_player = GreedyPlayer()
             
             if self.verbose > 0:
                 print('Step', GameStats.get_game_step())
                 
-            if sum_of_players == 0:
-                if self.verbose > 0:
-                    print('Random Play')
-                action = random_player.get_input(state, piece_type)
-                # self.play_log.append([deepcopy(state.board), action])
+            if sum_of_players <= 1:
+                i = j = (self.N//2)
+                if not go.valid_place_check(i, j, piece_type, test_check=True):
+                    if self.verbose > 0:
+                        print('Random Play')
+                    action = random_player.get_input(go, piece_type)
+                else:
+                    if self.verbose > 0:
+                        print('Optimal Start Play at', i, j)
+                    action = (i, j)
+                self.play_log.append([deepcopy(state.board), action])
 
             elif  GameStats.get_game_step() <= self.num_of_random_plays:
                 if self.verbose > 0:
                     print('Greedy play')
                 action = greedy_player.get_input(state, piece_type)
-                # self.play_log.append([deepcopy(state.board), action])
-                
+                self.play_log.append([deepcopy(state.board), action])
             else:
                 if self.verbose > 0:
                     print('Q-Learner play')
@@ -234,63 +237,52 @@ class QLearner:
             log_file.write(statement + '\n')            
             log_file.close()
     
-    def learn(self, state):
-        def calc_terminal_reward(state, bias=14.5):
-            cnt_1 = state.score(1)
-            cnt_2 = state.score(2)
+    def learn(self, final_state):
+        def calc_state_reward(board_state, bias=14.5):
+            def score(board, piece_type):
+                '''
+                Copied from Host File
+                '''
+                cnt = 0
+                for i in range(self.N):
+                    for j in range(self.N):
+                        if board[i][j] == piece_type:
+                            cnt += 1
+                return cnt 
+            cnt_1 = score(board_state, 1)
+            cnt_2 = score(board_state, 2)
             side = 1 if self.piece_type == 1 else -1
-            score_diff = (side)*(cnt_1 - (cnt_2 + state.komi)) 
+            # TODO unhardcode the komi value
+            score_diff = (side)*(cnt_1 - (cnt_2 + 2.5)) 
             winner = 'YOU WON' if score_diff > 0 else 'YOU LOST' if score_diff < 0 else 'DRAW'
-            reward = 0 if score_diff < 0 else 1 # (score_diff + bias)
-            # reward = score_diff
-            # return (score_diff + bias), winner
+            # reward = -2 if score_diff < 0 else 1 # (score_diff + bias)
+            reward = score_diff
             return reward, winner
         
-        def calc_state_reward(s1, s2):
-            # return num of dead pieces
-            diff = np.array(s2) - np.array(s1)
-            return 0 #len(diff[diff > 0])
-
-    
+        def calc_state_action_reward(board_state, next_state):
+            diff = np.array(next_state) - np.array(board_state)
+            # captured pieces
+            return len(diff[diff < 0])
+        
+        end_reward, winner = calc_state_reward(final_state.board)
+        
         if self.verbose > 1:
             print('\nLearning Starting')
             print('Play-log consists of %d states' % len(self.play_log))
             print('Q-values consists of %d tables' % len(self.q_values.q_tables))
-
-        board_state, action = self.play_log.pop()
-        # final_board_state = deepcopy(board_state)
-        
-        # reward = WIN_REWARD if winner == self.piece_type else DRAW_REWARD if winner == 0 else LOSS_REWARD
-        end_reward, winner = calc_terminal_reward(state)
-
-        if self.verbose > 1:
             print('Winner is', winner)
-            print('Final Reward is %f' % end_reward)
+            # print('Final Reward is %f' % end_reward)
             print('Final State state:')
-            self.visualize_board(state.board)
+            self.visualize_board(final_state.board)
             print('Last board state in log:')
-            self.visualize_board(board_state)
-            print('Applied action:', action)
-            print('Corresponding Q-values before update:')
-            self.q_values.visualize_q_table((board_state, self.piece_type))
-
+            self.visualize_board(self.play_log[-1][0])
+            print('Applied action:', self.play_log[-1][1])
             
-        self.q_values[((board_state, self.piece_type), action)] = end_reward
-        
-        if self.verbose > 1:
-            print('Corresponding Q-values after update:')
-            self.q_values.visualize_q_table((board_state, self.piece_type))
-            print('\nPropagate rewards back from result...')
-            
-        max_q = self.q_values.max_q((board_state, self.piece_type))
-        policy_q = self.q_values[((board_state, self.piece_type), action)] 
-        # if max_q != end_reward:
-        #     print('\noppppss something weird here')
-        #     print('max q is', max_q, 'while end_reward is', end_reward)
-        #     self.q_values.visualize_q_table((board_state, self.piece_type))
+        max_q = -np.inf #self.q_values.max_q((board_state, self.piece_type))
+        # policy_q = -np.inf # self.q_values[((board_state, self.piece_type), action)] 
 
-    
         # propagate rewards back from result: update move's q-value per state back to the start of the game
+        most_recent_board_state = final_state.board
         while len(self.play_log) > 0:
             board_state, action = self.play_log.pop()
             
@@ -301,60 +293,36 @@ class QLearner:
                 print('Corresponding Q-values before update:')
                 self.q_values.visualize_q_table((board_state, self.piece_type))
             
-            current_q = self.q_values[((board_state, self.piece_type), action)]
+            old_q = self.q_values[((board_state, self.piece_type), action)]
+            # state_reward, _ = calc_state_reward(board_state)
             
-            if len(self.play_log) > 1:
-                state_reward = calc_state_reward(board_state, deepcopy(self.play_log[-1][0]))
-            else:
-                state_reward = 0
-            # new_q = (1-self.alpha)*(current_q) + self.alpha*(state_reward + self.gamma*max_q)
-            new_q = (1-self.alpha)*(current_q) + self.alpha*(state_reward + self.gamma*policy_q)
-
-            if current_q > new_q and winner == 'YOU WON':
-                # new_q = current_q
-                statement = 'There is possibly a bug regarding your values with' +\
-                      ' action ' + str(action) + '\n' +\
-                      'old_q > new_q : %s > %s ' % (current_q, new_q) +\
-                      ' while YOU WON'
-                print(statement)
-                
-                # print('current_q', current_q, 'at', action, '-> new_q' ,new_q)
-                # print('state_reward', state_reward, 'max_q', max_q, 'policy_q', policy_q)
-                
-                with open(self.get_train_identifier() + '/' + 'bugs.log', 'a') as f:
-                    f.write(statement)
-               
-                
-            if current_q < new_q and winner != 'YOU WON':
-                statement = 'There is possibly a bug regarding your values with' +\
-                      ' action ' + str(action) + '\n' +\
-                      'old_q < new_q : %s < %s' % (current_q, new_q) +\
-                      ' while YOU LOST'
-                print(statement)
-                with open(self.get_train_identifier() + '/' + 'bugs.log', 'a') as f:
-                    f.write(statement)
-                
-            if self.verbose > 1:
-                print('current_q', current_q, 'at', action, '-> new_q' ,new_q)
-                # print('state_reward', state_reward, 'max_q', max_q)
-                print('state_reward', state_reward, 'max_q', max_q, 'policy_q', policy_q)
-
-                
+            reward = calc_state_action_reward(board_state, most_recent_board_state)
+            most_recent_board_state = board_state
+            if max_q == -np.inf:
+                # policy_q = end_reward
+                # Based on final state of the game
+                max_q = self.q_values.max_q((final_state.board, self.piece_type))
+            
+            new_q = (1-self.alpha)*(old_q) + self.alpha*(reward + self.gamma*max_q)
+            # new_q = (1-self.alpha)*(old_q) + self.alpha*(state_reward + self.gamma*policy_q)
             self.q_values[((board_state, self.piece_type), action)] = new_q
                 
-            # max_q = self.q_values.max_q((board_state, self.piece_type))
-            policy_q = new_q
-            
             if self.verbose > 1:
+                print('old_q', old_q, 'at', action, '-> new_q' ,new_q)
+                print('reward', reward, 'max_q', max_q)
+                # print('state_reward', state_reward, 'max_q', max_q, 'policy_q', policy_q)
+            
                 print('Corresponding Q-values after update:')
                 self.q_values.visualize_q_table((board_state, self.piece_type))
+                
+            max_q = self.q_values.max_q((board_state, self.piece_type))
+            # policy_q = new_q
                 
         if self.verbose > 1:
             print('Winner is', winner, )
             print('To recall.. Final Reward is %f' % end_reward)
             print('with game state:')
-            self.visualize_board(state.board)
-            # self.visualize_board(final_board_state)
+            self.visualize_board(final_state.board)
             
     
     def get_train_identifier(self):
