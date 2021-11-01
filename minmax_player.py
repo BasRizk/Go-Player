@@ -12,15 +12,18 @@ import datetime
 
 class MinMaxPlayer():
     
-    def __init__(self, piece_type):
+    def __init__(self, piece_type, N=5, time_limit=8):
         self.own_piece_type = piece_type 
-        self.N = 5
+        self.N = N
         self.board_size = self.N**2
         self.init_mappings()
-        #self.debug.dictionary = {}
-
-    def init_mappings(self):
+        self.time_limit = time_limit
+        
+    def init_expansion_aux(self):
         self.v_dict = {}
+        
+    def init_mappings(self):
+        self.init_expansion_aux()
         self.encoding_dict = {}
     
         self.action_to_listing = {}
@@ -82,8 +85,36 @@ class MinMaxPlayer():
         
     def record_v(self, board_state_encoded, new_v):
         self.v_dict[board_state_encoded] = new_v
+    
+    
+    def is_time_out(self):
+        time_elapsed = (datetime.datetime.now() - self.process_start_time).total_seconds()
+        if time_elapsed > self.time_limit and self.best_action is not None:
+            print('Exceeded Timelimit')
+            return True
+        return False
+    
 
     def get_input(self, go_state, piece_type, depth=3):
+        self.process_start_time = datetime.datetime.now()
+        self.best_action = None
+        print('Wanting to reach depth %d' % depth)
+        start_depth = min(depth, 3)
+        print('Applying Iterative Deepening from depth %d' % start_depth)
+        for i in range(start_depth, depth+1):
+            print('Trying depth', i)
+            self.init_expansion_aux()
+            yet_best_action = self.get_input_internal(go_state, piece_type, depth=i)
+            time_elapsed = (datetime.datetime.now() - self.process_start_time).total_seconds()
+            print('Time elapsed =', time_elapsed)
+            if yet_best_action is None:
+                print(': Failed')
+                break
+            print('Depth %d: Succeeded' % i)
+            self.best_action = yet_best_action
+        return self.best_action
+    
+    def get_input_internal(self, go_state, piece_type, depth=3):
         '''
         Get one input using Alpha-beta Search
 
@@ -91,7 +122,6 @@ class MinMaxPlayer():
         :param piece_type: 1('X') or 2('O').
         :return: (row, column) coordinate of input.
         '''
-        
         self.depth = depth - 1
         self.num_branches = [0 for i in range(depth)]
         self.num_cut_branches = [0 for i in range(depth)]
@@ -114,7 +144,10 @@ class MinMaxPlayer():
                 self.record_v(board_state_encoded, v_bar)
             else:
                 self.num_cut_branches[self.depth-depth] += 1
-                
+            
+            if self.is_time_out():
+                return
+            
             if v_bar > v:                
                 v = v_bar
                 a = action
@@ -141,13 +174,20 @@ class MinMaxPlayer():
             
             if v_bar is None:
                 self.num_branches[self.depth-depth] += 1
-                v = max(v, self.min_val(resulting_state,
-                                        cur_piece_type, alpha, beta, depth))
+                v_bar = self.min_val(resulting_state,
+                                     cur_piece_type, alpha, beta, depth)
+                if v_bar is None:
+                    # TIMEOUT
+                    return
+                v = max(v, v_bar)
                 self.record_v(board_state_encoded, v)
             else:
                 v = max(v, v_bar)
                 self.num_cut_branches[self.depth-depth] += 1
-                
+            
+            if self.is_time_out():
+                return
+            
             if v >= beta:
                 return v
             alpha = max(alpha, v)        
@@ -167,13 +207,19 @@ class MinMaxPlayer():
             
             if v_bar is None:
                 self.num_branches[self.depth-depth] += 1
-                v = min(v, self.max_val(resulting_state,
-                                        cur_piece_type, alpha, beta, depth))
+                v_bar = self.max_val(resulting_state,
+                                        cur_piece_type, alpha, beta, depth)
+                if v_bar is None:
+                    return
+                v = min(v, v_bar)
                 self.record_v(board_state_encoded, v)
             else:
                 v = min(v, v_bar)
                 self.num_cut_branches[self.depth-depth] += 1
-                
+            
+            if self.is_time_out():
+                return
+            
             if v <= alpha:
                 return v
             beta = min(beta, v)
