@@ -12,12 +12,13 @@ import datetime
 
 class MinMaxPlayer():
     
-    def __init__(self, piece_type, N=5, time_limit=8):
+    def __init__(self, piece_type, N=5, starting_depth=4, time_limit=8):
         self.own_piece_type = piece_type 
         self.N = N
         self.board_size = self.N**2
         self.init_mappings()
         self.time_limit = time_limit
+        self.starting_depth = starting_depth
         
     def init_expansion_aux(self):
         self.v_dict = {}
@@ -99,7 +100,7 @@ class MinMaxPlayer():
         self.process_start_time = datetime.datetime.now()
         self.best_action = None
         print('Wanting to reach depth %d' % depth)
-        start_depth = min(depth, 3)
+        start_depth = min(depth, self.starting_depth)
         print('Applying Iterative Deepening from depth %d' % start_depth)
         for i in range(start_depth, depth+1):
             print('Trying depth', i)

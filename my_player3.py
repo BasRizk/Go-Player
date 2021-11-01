@@ -24,7 +24,7 @@ if __name__ == '__main__':
     go.set_board(piece_type, previous_board, board)
     
     
-    minmax_player = MinMaxPlayer(piece_type, N=N, time_limit=9)
+    minmax_player = MinMaxPlayer(piece_type, N=N, starting_depth=3, time_limit=8.5)
     random_player = RandomPlayer()
     greedy_player = GreedyPlayer()
     
@@ -49,19 +49,16 @@ if __name__ == '__main__':
         else:
             print('Optimal Start Play at', i, j)
             action = (i, j)
-    #elif GameStats.get_game_step() <= num_of_random_plays:
-    #    print('Greedy play')
-    #    action = greedy_player.get_input(go, piece_type)
+    elif GameStats.get_game_step() <= num_of_random_plays:
+        print('Greedy play')
+        action = greedy_player.get_input(go, piece_type)
     else:
-        offset = 26 if piece_type == 1 else 27
+        offset = 26 if piece_type == 1 else 25
         current_step = GameStats.get_game_step()
         print('Sum of Player:', sum_of_players)
         print('Sum of Opponents:', num_of_opponents)
-        max_depth = 6 if num_of_opponents >= 9 else 5 if num_of_opponents >= 8 else 4 if num_of_opponents >= 4 else 3
-        #max_depth = 6 if sum_of_players >= 10 else 5 if sum_of_players >= 8 else 4 if sum_of_players >= 5 else 3
-        #max_depth = 4
+        max_depth = 7 if num_of_opponents >= 8 else 6 if num_of_opponents >= 5 else 4 if num_of_opponents >= 2 else 3
         depth = min(offset - current_step*2, max_depth)
-        #depth=4
         print('MinMax Play with Depth', depth)
         action = minmax_player.get_input(go, piece_type, depth=depth)
     print('Time consumed:', datetime.datetime.now() - begin_time)
